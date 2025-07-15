@@ -232,13 +232,8 @@ export class SolanaNativeContract {
       // Check if there's a different location for logs
       console.log('Raw transaction data:', receipt.result?.neonRawTransaction)
       
-      // Get additional transaction details
-      try {
-        const txDetails = await this.proxyApi.getTransaction(txHash)
-        console.log('Full transaction details:', JSON.stringify(txDetails, null, 2))
-      } catch (e) {
-        console.log('Could not fetch transaction details:', e)
-      }
+      // Note: getTransaction method not available on NeonProxyRpcApi
+      // The transaction receipt already contains the necessary information
 
       // Extract all neonLogs from solanaTransactions
       const allNeonLogs: any[] = []

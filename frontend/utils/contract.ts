@@ -47,7 +47,7 @@ export class SolanaTipCardContract {
   async connectWallet(walletProvider: any): Promise<void> {
     const provider = new ethers.BrowserProvider(walletProvider)
     this.signer = await provider.getSigner()
-    this.contract = this.contract.connect(this.signer)
+    this.contract = new ethers.Contract(CONTRACT_ADDRESS, SOLANA_TIPCARD_ABI, this.signer)
   }
 
   /**
