@@ -4,20 +4,13 @@ import { useState, useEffect } from 'react'
 import { useWallet, useConnection } from '@solana/wallet-adapter-react'
 import { CheckCircle, AlertCircle, DollarSign, User, Clock, Zap, Send } from 'lucide-react'
 import { SimpleWalletSigner } from '@/utils/simple-wallet-signer'
+import { solanaTipCardContract, PaymentLink } from '@/utils/contract'
 import { PublicKey } from '@solana/web3.js'
-
-interface PaymentLinkData {
-  creator: string
-  amount: number
-  isFlexible: boolean
-  description: string
-  timestamp: number
-}
 
 export const SimplePaymentProcessor = () => {
   const { publicKey, wallet } = useWallet()
   const [linkId, setLinkId] = useState('')
-  const [paymentData, setPaymentData] = useState<PaymentLinkData | null>(null)
+  const [paymentData, setPaymentData] = useState<PaymentLink | null>(null)
   const [customAmount, setCustomAmount] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isPaying, setIsPaying] = useState(false)
@@ -62,32 +55,57 @@ export const SimplePaymentProcessor = () => {
     setError(null)
 
     try {
-      // Decode the payment link data
-      const decoded = atob(id)
-      const data: PaymentLinkData = JSON.parse(decoded)
+      // Try to load from contract first (new format)
+      let data: PaymentLink
       
-      // Validate the data
-      if (!data.creator) {
-        throw new Error('Invalid payment link: missing creator')
-      }
-
-      // Validate creator is a valid Solana address
       try {
-        new PublicKey(data.creator)
-      } catch {
-        throw new Error('Invalid payment link: invalid creator address')
+        data = await solanaTipCardContract.getPaymentLink(id)
+        
+        // Check if link is active
+        if (!data.isActive) {
+          throw new Error('This payment link is no longer active')
+        }
+        
+      } catch (contractError) {
+        // Fallback to demo format for backward compatibility
+        try {
+          const decoded = atob(id)
+          const demoData = JSON.parse(decoded)
+          
+          // Convert demo format to PaymentLink format
+          data = {
+            evmCreator: '0x0000000000000000000000000000000000000000', // Demo links don't have EVM creator
+            solanaCreator: demoData.creator,
+            amount: BigInt(Math.floor((demoData.amount || 0) * 1e9)), // Convert SOL to lamports
+            isFlexible: demoData.isFlexible,
+            isActive: true,
+            totalReceived: BigInt(0),
+            paymentCount: 0,
+            description: demoData.description || ''
+          }
+          
+          // Validate creator is a valid Solana address
+          try {
+            new PublicKey(data.solanaCreator)
+          } catch {
+            throw new Error('Invalid payment link: invalid creator address')
+          }
+          
+        } catch (demoError) {
+          throw new Error('Invalid payment link format')
+        }
       }
 
       setPaymentData(data)
       
       // If it's a fixed amount, set the custom amount
-      if (!data.isFlexible) {
-        setCustomAmount(data.amount.toString())
+      if (!data.isFlexible && data.amount > 0) {
+        setCustomAmount((Number(data.amount) / 1e9).toString())
       }
       
     } catch (error) {
       console.error('Error loading payment link:', error)
-      setError('Invalid payment link or link not found')
+      setError(error instanceof Error ? error.message : 'Invalid payment link or link not found')
     } finally {
       setIsLoading(false)
     }
@@ -105,7 +123,7 @@ export const SimplePaymentProcessor = () => {
       }
       paymentAmount = parseFloat(customAmount)
     } else {
-      paymentAmount = paymentData.amount
+      paymentAmount = Number(paymentData.amount) / 1e9 // Convert lamports to SOL
     }
 
     setIsPaying(true)
@@ -125,26 +143,38 @@ export const SimplePaymentProcessor = () => {
         throw new Error(`Insufficient SOL for payment. You have ${balance.toFixed(4)} SOL but need ${totalNeeded.toFixed(4)} SOL (including fees).`)
       }
 
-      // Create recipient public key
-      const recipientPubkey = new PublicKey(paymentData.creator)
-      
-      // Create and send SOL transfer
-      const result = await signer.createSOLTransfer(
-        wallet.adapter as any,
-        publicKey,
-        recipientPubkey,
-        paymentAmount
-      )
+      // Check if this is a contract-based payment link or demo link
+      if (linkId.length === 66 && linkId.startsWith('0x')) {
+        // Contract-based payment - use the contract
+        try {
+          // Connect wallet to contract
+          if ((window as any).ethereum) {
+            await solanaTipCardContract.connectWallet((window as any).ethereum)
+          }
 
-      if (result.success) {
-        console.log('Payment successful:', result.signature)
-        setPaymentStatus('success')
+          const result = await solanaTipCardContract.payLink(
+            linkId,
+            paymentAmount,
+            publicKey
+          )
+
+          console.log('Contract payment successful:', result.txHash)
+          setPaymentStatus('success')
+          
+          // Update balance
+          checkBalance()
+          
+          alert(`Payment successful! Transaction hash: ${result.txHash}`)
+          
+        } catch (contractError) {
+          // Fallback to direct SOL transfer if contract payment fails
+          console.warn('Contract payment failed, falling back to direct transfer:', contractError)
+          await performDirectTransfer(paymentAmount)
+        }
         
-        // Update balance
-        checkBalance()
-        
-        // Show success message
-        alert(`Payment successful! Sent ${paymentAmount} SOL to ${paymentData.creator.slice(0, 8)}...${paymentData.creator.slice(-8)}`)
+      } else {
+        // Demo link or fallback - use direct SOL transfer
+        await performDirectTransfer(paymentAmount)
       }
 
     } catch (error) {
@@ -153,6 +183,32 @@ export const SimplePaymentProcessor = () => {
       setPaymentStatus('error')
     } finally {
       setIsPaying(false)
+    }
+  }
+
+  const performDirectTransfer = async (paymentAmount: number) => {
+    if (!publicKey || !paymentData || !wallet?.adapter) return
+    
+    // Create recipient public key
+    const recipientPubkey = new PublicKey(paymentData.solanaCreator)
+    
+    // Create and send SOL transfer
+    const result = await signer.createSOLTransfer(
+      wallet.adapter as any,
+      publicKey,
+      recipientPubkey,
+      paymentAmount
+    )
+
+    if (result.success) {
+      console.log('Direct payment successful:', result.signature)
+      setPaymentStatus('success')
+      
+      // Update balance
+      checkBalance()
+      
+      // Show success message
+      alert(`Payment successful! Sent ${paymentAmount} SOL to ${paymentData.solanaCreator.slice(0, 8)}...${paymentData.solanaCreator.slice(-8)}`)
     }
   }
 
@@ -253,22 +309,30 @@ export const SimplePaymentProcessor = () => {
             <div className="flex items-center space-x-2">
               <User className="w-5 h-5 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Pay to:</span>
-              <span className="font-mono text-sm">{formatAddress(paymentData.creator)}</span>
+              <span className="font-mono text-sm">{formatAddress(paymentData.solanaCreator)}</span>
             </div>
             
             <div className="flex items-center space-x-2">
               <DollarSign className="w-5 h-5 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Amount:</span>
               <span className="font-semibold">
-                {paymentData.isFlexible ? 'Flexible' : `${paymentData.amount} SOL`}
+                {paymentData.isFlexible ? 'Flexible' : `${(Number(paymentData.amount) / 1e9).toFixed(4)} SOL`}
               </span>
             </div>
             
             <div className="flex items-center space-x-2">
-              <Clock className="w-5 h-5 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Created:</span>
-              <span className="text-sm">{new Date(paymentData.timestamp).toLocaleString()}</span>
+              <CheckCircle className="w-5 h-5 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Status:</span>
+              <span className="text-sm">{paymentData.isActive ? 'Active' : 'Inactive'}</span>
             </div>
+            
+            {paymentData.paymentCount > 0 && (
+              <div className="flex items-center space-x-2">
+                <Zap className="w-5 h-5 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Payments:</span>
+                <span className="text-sm">{paymentData.paymentCount} payments • {(Number(paymentData.totalReceived) / 1e9).toFixed(4)} SOL total</span>
+              </div>
+            )}
             
             {paymentData.description && (
               <div className="pt-2 border-t border-border">
@@ -295,9 +359,9 @@ export const SimplePaymentProcessor = () => {
                   className="w-full p-3 pl-10 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
-              {paymentData.amount > 0 && (
+              {Number(paymentData.amount) > 0 && (
                 <p className="text-xs text-muted-foreground mt-1">
-                  Suggested: {paymentData.amount} SOL
+                  Suggested: {(Number(paymentData.amount) / 1e9).toFixed(4)} SOL
                 </p>
               )}
             </div>
@@ -320,7 +384,7 @@ export const SimplePaymentProcessor = () => {
             ) : (
               <button
                 onClick={handlePayment}
-                disabled={isPaying || (!paymentData.isFlexible && paymentData.amount <= 0) || (paymentData.isFlexible && (!customAmount || parseFloat(customAmount) <= 0))}
+                disabled={isPaying || (!paymentData.isFlexible && Number(paymentData.amount) <= 0) || (paymentData.isFlexible && (!customAmount || parseFloat(customAmount) <= 0)) || !paymentData.isActive}
                 className="w-full bg-primary hover:bg-primary/80 disabled:bg-primary/50 text-primary-foreground font-medium py-3 px-4 rounded-lg transition-colors flex items-center justify-center space-x-2"
               >
                 {isPaying ? (
@@ -328,11 +392,16 @@ export const SimplePaymentProcessor = () => {
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     <span>Processing Payment...</span>
                   </>
+                ) : !paymentData.isActive ? (
+                  <>
+                    <AlertCircle className="w-5 h-5" />
+                    <span>Payment Link Inactive</span>
+                  </>
                 ) : (
                   <>
                     <Send className="w-5 h-5" />
                     <span>
-                      Pay {paymentData.isFlexible ? (customAmount ? `${customAmount} SOL` : 'Amount') : `${paymentData.amount} SOL`}
+                      Pay {paymentData.isFlexible ? (customAmount ? `${customAmount} SOL` : 'Amount') : `${(Number(paymentData.amount) / 1e9).toFixed(4)} SOL`}
                     </span>
                   </>
                 )}

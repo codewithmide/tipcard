@@ -2,29 +2,17 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { ethers } from 'ethers'
-import { Copy, CheckCircle, ExternalLink, DollarSign, User, Clock } from 'lucide-react'
+import { Copy, CheckCircle, ExternalLink, DollarSign, User, Clock, Trash2 } from 'lucide-react'
+import { solanaTipCardContract, PaymentLink } from '@/utils/contract'
 
-const CONTRACT_ADDRESS = '0xa5Faf19C61CA722873987Fa9D7F9f434cf15c674'
-const NEON_RPC_URL = 'https://devnet.neonevm.org'
-
-const CONTRACT_ABI = [
-  "function paymentCount() external view returns (uint256)",
-  "function getPaymentLink(uint256 _linkId) external view returns (address recipient, uint256 amount, string memory description, bool isActive, uint256 createdAt)"
-]
-
-interface PaymentLink {
+interface DisplayLink extends PaymentLink {
   id: string
-  recipient: string
-  amount: string
-  description: string
-  isActive: boolean
-  createdAt: string
+  url: string
 }
 
 export const MyLinks = () => {
   const { publicKey } = useWallet()
-  const [links, setLinks] = useState<PaymentLink[]>([])
+  const [links, setLinks] = useState<DisplayLink[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
@@ -39,30 +27,41 @@ export const MyLinks = () => {
 
     setIsLoading(true)
     try {
-      const provider = new ethers.JsonRpcProvider(NEON_RPC_URL)
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider)
-      
-      const paymentCount = await contract.paymentCount()
-      const userLinks: PaymentLink[] = []
-
-      // Fetch all payment links and filter by user
-      for (let i = 1; i <= Number(paymentCount); i++) {
+      // Connect to wallet for EVM address if available
+      let userAddress = null
+      if ((window as any).ethereum) {
         try {
-          const result = await contract.getPaymentLink(i)
+          await solanaTipCardContract.connectWallet((window as any).ethereum)
+          const accounts = await (window as any).ethereum.request({ method: 'eth_accounts' })
+          userAddress = accounts[0]
+        } catch (error) {
+          console.warn('Could not connect to EVM wallet:', error)
+        }
+      }
+
+      if (!userAddress) {
+        // If no EVM wallet connected, show empty state with instruction
+        setLinks([])
+        return
+      }
+
+      // Get user's payment links from contract
+      const linkIds = await solanaTipCardContract.getUserLinks(userAddress)
+      const userLinks: DisplayLink[] = []
+
+      // Fetch details for each link
+      for (const linkId of linkIds) {
+        try {
+          const linkData = await solanaTipCardContract.getPaymentLink(linkId)
+          const url = solanaTipCardContract.createPaymentURL(linkId)
           
-          // Check if this link belongs to the current user
-          // Note: In a real app, you'd want to store creator info in the contract
-          // For now, we'll show all links as an example
           userLinks.push({
-            id: i.toString(),
-            recipient: result[0],
-            amount: ethers.formatUnits(result[1], 9), // SOL has 9 decimals
-            description: result[2],
-            isActive: result[3],
-            createdAt: new Date(Number(result[4]) * 1000).toLocaleString()
+            ...linkData,
+            id: linkId,
+            url: url
           })
         } catch (error) {
-          console.error(`Error fetching link ${i}:`, error)
+          console.error(`Error fetching link ${linkId}:`, error)
         }
       }
 
@@ -74,11 +73,25 @@ export const MyLinks = () => {
     }
   }
 
-  const copyToClipboard = async (linkId: string) => {
-    const paymentLink = `${window.location.origin}?pay=${linkId}`
-    await navigator.clipboard.writeText(paymentLink)
+  const copyToClipboard = async (url: string, linkId: string) => {
+    await navigator.clipboard.writeText(url)
     setCopiedId(linkId)
     setTimeout(() => setCopiedId(null), 2000)
+  }
+
+  const deactivateLink = async (linkId: string) => {
+    if (!confirm('Are you sure you want to deactivate this payment link?')) {
+      return
+    }
+
+    try {
+      await solanaTipCardContract.deactivateLink(linkId)
+      alert('Payment link deactivated successfully!')
+      fetchMyLinks() // Refresh the list
+    } catch (error) {
+      console.error('Error deactivating link:', error)
+      alert(`Failed to deactivate link: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
   }
 
   const formatAddress = (address: string) => {
@@ -132,7 +145,7 @@ export const MyLinks = () => {
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center space-x-2">
                   <div className="w-8 h-8 bg-gradient-to-r from-neon-400 to-neon-600 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-sm font-mono">#{link.id}</span>
+                    <span className="text-white text-xs font-mono">{link.id.slice(-4)}</span>
                   </div>
                   <div>
                     <h3 className="font-semibold">
@@ -147,7 +160,7 @@ export const MyLinks = () => {
                 
                 <div className="flex items-center space-x-2">
                   <button
-                    onClick={() => copyToClipboard(link.id)}
+                    onClick={() => copyToClipboard(link.url, link.id)}
                     className="p-2 hover:bg-accent rounded-lg transition-colors"
                     title="Copy payment link"
                   >
@@ -165,28 +178,52 @@ export const MyLinks = () => {
                   >
                     <ExternalLink className="w-4 h-4" />
                   </a>
+
+                  {link.isActive && (
+                    <button
+                      onClick={() => deactivateLink(link.id)}
+                      className="p-2 hover:bg-accent rounded-lg transition-colors text-red-500"
+                      title="Deactivate payment link"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div className="flex items-center space-x-2">
                   <User className="w-4 h-4 text-muted-foreground" />
                   <span className="text-muted-foreground">Recipient:</span>
-                  <span className="font-mono">{formatAddress(link.recipient)}</span>
+                  <span className="font-mono">{formatAddress(link.solanaCreator)}</span>
                 </div>
                 
                 <div className="flex items-center space-x-2">
                   <DollarSign className="w-4 h-4 text-muted-foreground" />
                   <span className="text-muted-foreground">Amount:</span>
-                  <span className="font-semibold">{link.amount} SOL</span>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Clock className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Created:</span>
-                  <span>{link.createdAt}</span>
+                  <span className="font-semibold">
+                    {link.isFlexible ? 'Flexible' : `${(Number(link.amount) / 1e9).toFixed(4)} SOL`}
+                  </span>
                 </div>
               </div>
+
+              {link.paymentCount > 0 && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div className="flex items-center space-x-2">
+                      <CheckCircle className="w-4 h-4 text-green-500" />
+                      <span className="text-muted-foreground">Payments received:</span>
+                      <span className="font-semibold">{link.paymentCount}</span>
+                    </div>
+                    
+                    <div className="flex items-center space-x-2">
+                      <DollarSign className="w-4 h-4 text-green-500" />
+                      <span className="text-muted-foreground">Total received:</span>
+                      <span className="font-semibold text-green-500">{(Number(link.totalReceived) / 1e9).toFixed(4)} SOL</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {copiedId === link.id && (
                 <div className="mt-4 bg-green-500/10 border border-green-500/20 rounded-lg p-2">

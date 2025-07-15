@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useWallet, useConnection } from '@solana/wallet-adapter-react'
 import { Copy, CheckCircle, Link, DollarSign, Shield, Users, Coins, AlertCircle, Zap } from 'lucide-react'
 import { SimpleWalletSigner } from '@/utils/simple-wallet-signer'
+import { solanaTipCardContract } from '@/utils/contract'
 import { PublicKey } from '@solana/web3.js'
 
 export const SimplePaymentLink = () => {
@@ -77,27 +78,31 @@ export const SimplePaymentLink = () => {
         return
       }
 
-      // For now, create a simple demo link since we need the contract to be properly integrated
-      // In a real implementation, this would call the contract
-      
+      // Connect wallet to contract (for Neon EVM integration)
+      if (wallet.adapter.publicKey && (window as any).ethereum) {
+        await solanaTipCardContract.connectWallet((window as any).ethereum)
+      } else {
+        alert('Please connect a wallet that supports both Solana and EVM (like Metamask with Neon).')
+        return
+      }
+
       const amountValue = amount ? parseFloat(amount) : 0
       
-      // Create a mock payment link for demonstration
-      const linkData = {
-        creator: publicKey.toBase58(),
-        amount: amountValue,
+      // Create payment link using the actual smart contract
+      const result = await solanaTipCardContract.createPaymentLink(
+        amountValue,
         isFlexible,
-        description: description || 'Payment request',
-        timestamp: Date.now()
-      }
+        description || 'Payment request'
+      )
       
-      // Encode the link data
-      const linkId = btoa(JSON.stringify(linkData))
-      const paymentLink = `${window.location.origin}?pay=${linkId}`
+      // Create shareable payment link
+      const paymentLink = solanaTipCardContract.createPaymentURL(result.linkId)
       
       setCreatedLink(paymentLink)
       setTxResults({
-        type: 'demo_link',
+        type: 'contract_link',
+        linkId: result.linkId,
+        txHash: result.txHash,
         creator: publicKey.toBase58(),
         amount: amountValue,
         isFlexible,
@@ -326,6 +331,18 @@ export const SimplePaymentLink = () => {
               <span className="text-muted-foreground">Creator:</span>
               <span className="font-mono text-xs block break-all">{txResults.creator}</span>
             </div>
+            {txResults.linkId && (
+              <div>
+                <span className="text-muted-foreground">Link ID:</span>
+                <span className="font-mono text-xs block break-all">{txResults.linkId}</span>
+              </div>
+            )}
+            {txResults.txHash && (
+              <div>
+                <span className="text-muted-foreground">Transaction:</span>
+                <span className="font-mono text-xs block break-all">{txResults.txHash}</span>
+              </div>
+            )}
             <div className="pt-2 border-t border-green-500/20">
               <span className="text-muted-foreground">Payment Settings:</span>
               <span className="text-xs block">
@@ -362,7 +379,7 @@ export const SimplePaymentLink = () => {
           <div className="text-xs text-blue-600 dark:text-blue-400 space-y-1">
             <p>✅ Anyone with this link can send SOL to your wallet</p>
             <p>✅ Payments go directly to: {publicKey.toBase58().slice(0, 8)}...{publicKey.toBase58().slice(-8)}</p>
-            <p>✅ This is a demo link - in production it would use the smart contract</p>
+            <p>✅ Powered by SolanaTipCard smart contract on Neon EVM</p>
           </div>
         </div>
       )}

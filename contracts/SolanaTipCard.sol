@@ -60,35 +60,35 @@ contract SolanaTipCard {
     error InsufficientBalance();
     
     function createSolanaPaymentLink(
-        bytes32 _solanaCreator,
-        uint64 _amount,
+        uint64 _suggestedAmount,
         bool _isFlexible,
         string memory _description
     ) external returns (bytes32) {
-        // Validate amount for fixed links
-        if (!_isFlexible) {
-            if (_amount == 0) revert InvalidAmount();
+        // For flexible links, suggested amount can be 0
+        if (!_isFlexible && _suggestedAmount == 0) {
+            revert InvalidAmount();
         }
         
-        // Use provided Solana creator address
-        if (_solanaCreator == bytes32(0)) revert SolanaUserNotRegistered();
+        // Get creator's Solana address from EVM address
+        bytes32 creatorSolanaAddress = SOLANA_NATIVE.solanaAddress(msg.sender);
+        if (creatorSolanaAddress == bytes32(0)) revert SolanaUserNotRegistered();
         
         // Generate unique link ID
         bytes32 linkId = keccak256(abi.encodePacked(
             msg.sender,
-            _solanaCreator,
+            creatorSolanaAddress,
             SOL_MINT, // Always SOL
-            _amount,
+            _suggestedAmount,
             _isFlexible,
             block.timestamp,
             linkCounter++
         ));
         
-        // Create payment link
+        // Create payment link where creator is the recipient
         paymentLinks[linkId] = SolanaPaymentLink({
             evmCreator: msg.sender,
-            solanaCreator: _solanaCreator,
-            amount: _amount,
+            solanaCreator: creatorSolanaAddress, // Creator receives payments
+            amount: _suggestedAmount,
             isFlexible: _isFlexible,
             isActive: true,
             totalReceived: 0,
@@ -99,7 +99,7 @@ contract SolanaTipCard {
         // Track user's links
         userLinks[msg.sender].push(linkId);
         
-        emit SolanaLinkCreated(linkId, msg.sender, _solanaCreator, _amount, _isFlexible, _description);
+        emit SolanaLinkCreated(linkId, msg.sender, creatorSolanaAddress, _suggestedAmount, _isFlexible, _description);
         
         return linkId;
     }

@@ -72,7 +72,6 @@ async function main() {
         const solanaCreatorAddress = `0x${wallets.solanaUser1.publicKey.toBuffer().toString('hex')}`;
         
         const tx = await solanaTipCard.connect(wallets.owner).createSolanaPaymentLink(
-            solanaCreatorAddress,
             amount,
             false,
             "Test SOL payment link"
