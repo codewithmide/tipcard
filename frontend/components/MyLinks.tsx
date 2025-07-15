@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { Copy, CheckCircle, ExternalLink, DollarSign, User, Clock, Trash2 } from 'lucide-react'
-import { solanaTipCardContract, PaymentLink } from '@/utils/contract'
+import { solanaNativeContract, PaymentLink } from '@/utils/solana-native-contract'
 
 interface DisplayLink extends PaymentLink {
   id: string
@@ -11,7 +11,7 @@ interface DisplayLink extends PaymentLink {
 }
 
 export const MyLinks = () => {
-  const { publicKey } = useWallet()
+  const { publicKey, wallet } = useWallet()
   const [links, setLinks] = useState<DisplayLink[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -27,33 +27,30 @@ export const MyLinks = () => {
 
     setIsLoading(true)
     try {
-      // Connect to wallet for EVM address if available
+      // Initialize Solana Native SDK to get EVM address
       let userAddress = null
-      if ((window as any).ethereum) {
-        try {
-          await solanaTipCardContract.connectWallet((window as any).ethereum)
-          const accounts = await (window as any).ethereum.request({ method: 'eth_accounts' })
-          userAddress = accounts[0]
-        } catch (error) {
-          console.warn('Could not connect to EVM wallet:', error)
-        }
+      try {
+        await solanaNativeContract.initWithSolanaWallet(wallet?.adapter)
+        userAddress = solanaNativeContract.getUserEVMAddress()
+      } catch (error) {
+        console.warn('Could not initialize Solana Native SDK:', error)
       }
 
       if (!userAddress) {
-        // If no EVM wallet connected, show empty state with instruction
+        // If no EVM address derived, show empty state
         setLinks([])
         return
       }
 
       // Get user's payment links from contract
-      const linkIds = await solanaTipCardContract.getUserLinks(userAddress)
+      const linkIds = await solanaNativeContract.getUserLinks(userAddress)
       const userLinks: DisplayLink[] = []
 
       // Fetch details for each link
       for (const linkId of linkIds) {
         try {
-          const linkData = await solanaTipCardContract.getPaymentLink(linkId)
-          const url = solanaTipCardContract.createPaymentURL(linkId)
+          const linkData = await solanaNativeContract.getPaymentLink(linkId)
+          const url = solanaNativeContract.createPaymentURL(linkId)
           
           userLinks.push({
             ...linkData,
@@ -85,7 +82,7 @@ export const MyLinks = () => {
     }
 
     try {
-      await solanaTipCardContract.deactivateLink(linkId)
+      await solanaNativeContract.deactivateLink(linkId)
       alert('Payment link deactivated successfully!')
       fetchMyLinks() // Refresh the list
     } catch (error) {

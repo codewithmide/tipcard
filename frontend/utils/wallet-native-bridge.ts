@@ -3,7 +3,7 @@ import { Connection, PublicKey, Transaction, Keypair, SystemProgram } from '@sol
 import { SignerWalletAdapter } from '@solana/wallet-adapter-base'
 import { ethers } from 'ethers'
 
-const NEON_RPC_URL = 'https://devnet.neonevm.org/sol'
+const NEON_RPC_URL = 'https://devnet.neonevm.org'
 const SOLANA_RPC_URL = 'https://api.devnet.solana.com'
 
 export class WalletNativeBridge {

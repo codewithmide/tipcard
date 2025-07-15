@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useWallet, useConnection } from '@solana/wallet-adapter-react'
 import { CheckCircle, AlertCircle, DollarSign, User, Clock, Zap, Send } from 'lucide-react'
 import { SimpleWalletSigner } from '@/utils/simple-wallet-signer'
-import { solanaTipCardContract, PaymentLink } from '@/utils/contract'
+import { solanaNativeContract, PaymentLink } from '@/utils/solana-native-contract'
 import { PublicKey } from '@solana/web3.js'
 
 export const SimplePaymentProcessor = () => {
@@ -55,19 +55,24 @@ export const SimplePaymentProcessor = () => {
     setError(null)
 
     try {
-      // Try to load from contract first (new format)
       let data: PaymentLink
       
-      try {
-        data = await solanaTipCardContract.getPaymentLink(id)
-        
-        // Check if link is active
-        if (!data.isActive) {
-          throw new Error('This payment link is no longer active')
+      // Check if this is a transaction hash (starts with 0x and is 66 chars) 
+      if (id.length === 66 && id.startsWith('0x')) {
+        console.log('Loading contract payment link with ID:', id)
+        try {
+          data = await solanaNativeContract.getPaymentLink(id)
+          
+          // Note: We'll allow inactive links to be displayed but disable payment
+          console.log('Payment link data:', data)
+          
+        } catch (contractError) {
+          console.error('Contract error:', contractError)
+          throw new Error('Payment link not found in contract or contract error')
         }
-        
-      } catch (contractError) {
-        // Fallback to demo format for backward compatibility
+      } else {
+        // Try base64 demo format for backward compatibility
+        console.log('Trying to load as demo format:', id)
         try {
           const decoded = atob(id)
           const demoData = JSON.parse(decoded)
@@ -92,10 +97,12 @@ export const SimplePaymentProcessor = () => {
           }
           
         } catch (demoError) {
-          throw new Error('Invalid payment link format')
+          console.error('Demo format error:', demoError)
+          throw new Error('Invalid payment link format. Please check the link and try again.')
         }
       }
 
+      console.log('Loaded payment data:', data)
       setPaymentData(data)
       
       // If it's a fixed amount, set the custom amount
@@ -143,28 +150,37 @@ export const SimplePaymentProcessor = () => {
         throw new Error(`Insufficient SOL for payment. You have ${balance.toFixed(4)} SOL but need ${totalNeeded.toFixed(4)} SOL (including fees).`)
       }
 
-      // Check if this is a contract-based payment link or demo link
+      // Check if this is a contract-based payment link (transaction hash) or demo link
       if (linkId.length === 66 && linkId.startsWith('0x')) {
-        // Contract-based payment - use the contract
+        // Contract-based payment - use Solana Native SDK
         try {
-          // Connect wallet to contract
-          if ((window as any).ethereum) {
-            await solanaTipCardContract.connectWallet((window as any).ethereum)
-          }
+          // Initialize Solana Native SDK
+          await solanaNativeContract.initWithSolanaWallet(wallet.adapter)
 
-          const result = await solanaTipCardContract.payLink(
+          const result = await solanaNativeContract.payLink(
             linkId,
-            paymentAmount,
-            publicKey
+            paymentAmount
           )
 
-          console.log('Contract payment successful:', result.txHash)
+          console.log('Payment successful!')
+          console.log('SOL transfer signature:', result.transferSignature)
+          console.log('Contract recording:', result.txHash)
           setPaymentStatus('success')
           
           // Update balance
           checkBalance()
           
-          alert(`Payment successful! Transaction hash: ${result.txHash}`)
+          // Show detailed success message
+          let successMessage = `Payment successful!\n`
+          if (result.transferSignature) {
+            successMessage += `SOL Transfer: ${result.transferSignature}\n`
+          }
+          if (result.txHash && result.txHash !== 'contract-recording-failed') {
+            successMessage += `Contract Record: ${result.txHash}`
+          } else {
+            successMessage += `Note: Payment went through but contract recording may have failed`
+          }
+          alert(successMessage)
           
         } catch (contractError) {
           // Fallback to direct SOL transfer if contract payment fails
@@ -173,7 +189,7 @@ export const SimplePaymentProcessor = () => {
         }
         
       } else {
-        // Demo link or fallback - use direct SOL transfer
+        // Demo link - use direct SOL transfer
         await performDirectTransfer(paymentAmount)
       }
 

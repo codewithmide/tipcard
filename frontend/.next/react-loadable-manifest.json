@@ -394,5 +394,9 @@
   "node_modules/viem/_esm/utils/signature/recoverPublicKey.js -> @noble/curves/secp256k1": {
     "id": "node_modules/viem/_esm/utils/signature/recoverPublicKey.js -> @noble/curves/secp256k1",
     "files": []
+  },
+  "utils/solana-native-contract.ts -> @solana/web3.js": {
+    "id": "utils/solana-native-contract.ts -> @solana/web3.js",
+    "files": []
   }
 }
