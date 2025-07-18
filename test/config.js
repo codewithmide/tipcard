@@ -15,8 +15,8 @@ const config = {
     },
     evm_sol_node: {
         curvestand: "https://curve-stand.neontest.xyz/SOL",
-        neondevnet: "https://devnet.neonevm.org/SOL",
-        neonmainnet: "https://neonevm.org/SOL",
+        neondevnet: "https://devnet.neonevm.org/sol",
+        neonmainnet: "https://neonevm.org/sol",
     },
     svm_node: {
         curvestand: "https://curve-stand.neontest.xyz/solana",

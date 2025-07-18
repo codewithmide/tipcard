@@ -383,7 +383,7 @@ The project is configured for Neon EVM Devnet:
 // hardhat.config.js
 networks: {
   neondevnet: {
-    url: "https://devnet.neonevm.org",
+    url: "https://devnet.neonevm.org/sol",
     accounts: [], // Uses keystore
     chainId: 245022926,
     allowUnlimitedContractSize: false,

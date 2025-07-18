@@ -1,24 +1,15 @@
 import { ethers } from 'ethers'
 import { PublicKey } from '@solana/web3.js'
+import ContractABI from './contractABI.json'
 
-// Contract ABI - only the functions we need
-const SOLANA_TIPCARD_ABI = [
-  "function createSolanaPaymentLink(uint64 _suggestedAmount, bool _isFlexible, string memory _description) external returns (bytes32)",
-  "function getSolanaPaymentLink(bytes32 _linkId) external view returns (tuple(address evmCreator, bytes32 solanaCreator, uint64 amount, bool isFlexible, bool isActive, uint64 totalReceived, uint32 paymentCount, string description))",
-  "function getUserSolanaLinks(address _user) external view returns (bytes32[] memory)",
-  "function paySolanaLink(bytes32 _linkId, uint64 _amount, bytes32 _payerSolanaAccount) external",
-  "function deactivateSolanaLink(bytes32 _linkId) external",
-  "function getSolanaUserAddress(address _evmAddress) external view returns (bytes32)",
-  "function isSolanaUser(address _evmAddress) external view returns (bool)",
-  "event SolanaLinkCreated(bytes32 indexed linkId, address indexed evmCreator, bytes32 indexed solanaCreator, uint64 amount, bool isFlexible, string description)",
-  "event SolanaPaymentReceived(bytes32 indexed linkId, bytes32 indexed payerSolana, bytes32 indexed recipientSolana, uint64 amount)"
-]
+// Use the actual deployed contract ABI
+const SOLANA_TIPCARD_ABI = ContractABI
 
 // Replace with your deployed contract address
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_TIPCARD_CONTRACT_ADDRESS || '0x...' // TODO: Set this after deployment
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_TIPCARD_CONTRACT_ADDRESS || '0xCFE03c7c67456D094C0162F9030393FC2cCc40Cb'
 
 // Neon EVM Devnet RPC
-const NEON_RPC_URL = 'https://devnet.neonevm.org'
+const NEON_RPC_URL = 'https://devnet.neonevm.org/sol'
 
 export interface PaymentLink {
   evmCreator: string
@@ -32,7 +23,7 @@ export interface PaymentLink {
 }
 
 export class SolanaTipCardContract {
-  private contract: ethers.Contract
+  private contract: any
   private provider: ethers.JsonRpcProvider
   private signer?: ethers.Signer
 
@@ -47,7 +38,7 @@ export class SolanaTipCardContract {
   async connectWallet(walletProvider: any): Promise<void> {
     const provider = new ethers.BrowserProvider(walletProvider)
     this.signer = await provider.getSigner()
-    this.contract = this.contract.connect(this.signer)
+    this.contract = new ethers.Contract(CONTRACT_ADDRESS, SOLANA_TIPCARD_ABI, this.signer)
   }
 
   /**

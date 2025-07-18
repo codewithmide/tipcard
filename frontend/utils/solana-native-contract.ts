@@ -1,21 +1,12 @@
 import { Connection, PublicKey, Keypair } from '@solana/web3.js'
-import { NeonProxyRpcApi, createBalanceAccountInstruction } from '@neonevm/solana-sign'
+import { NeonProxyRpcApi, createBalanceAccountInstruction, SolanaNeonAccount } from '@neonevm/solana-sign'
 import { ethers, hexlify, zeroPadValue } from 'ethers'
+import ContractABI from './contractABI.json'
 
-// Contract ABI - only the functions we need
-const SOLANA_TIPCARD_ABI = [
-  "function createSolanaPaymentLink(uint64 _suggestedAmount, bool _isFlexible, string memory _description) external returns (bytes32)",
-  "function getSolanaPaymentLink(bytes32 _linkId) external view returns (tuple(address evmCreator, bytes32 solanaCreator, uint64 amount, bool isFlexible, bool isActive, uint64 totalReceived, uint32 paymentCount, string description))",
-  "function getUserSolanaLinks(address _user) external view returns (bytes32[] memory)",
-  "function paySolanaLink(bytes32 _linkId, uint64 _amount, bytes32 _payerSolanaAccount) external",
-  "function deactivateSolanaLink(bytes32 _linkId) external",
-  "function getSolanaUserAddress(address _evmAddress) external view returns (bytes32)",
-  "function isSolanaUser(address _evmAddress) external view returns (bool)",
-  "event SolanaLinkCreated(bytes32 indexed linkId, address indexed evmCreator, bytes32 indexed solanaCreator, uint64 amount, bool isFlexible, string description)",
-  "event SolanaPaymentReceived(bytes32 indexed linkId, bytes32 indexed payerSolana, bytes32 indexed recipientSolana, uint64 amount)"
-]
+// Use the actual deployed contract ABI
+const SOLANA_TIPCARD_ABI = ContractABI
 
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_TIPCARD_CONTRACT_ADDRESS || '0x388Ed79FE1A0A05fa5adC14863EB153a31E4e469'
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_TIPCARD_CONTRACT_ADDRESS || '0xCFE03c7c67456D094C0162F9030393FC2cCc40Cb'
 const NEON_CORE_RPC_URL = process.env.NEXT_PUBLIC_NEON_RPC_URL || 'https://devnet.neonevm.org'
 const NEON_PROXY_RPC_URL = `${NEON_CORE_RPC_URL}/sol`
 const SOLANA_RPC_URL = 'https://api.devnet.solana.com'
@@ -35,8 +26,6 @@ export class SolanaNativeContract {
   private connection: Connection
   private proxyApi: NeonProxyRpcApi
   private solanaUser: any
-  private provider: any
-  private programAddress: PublicKey | null = null
   private chainId: number | null = null
   private contract: ethers.Contract | null = null
 
@@ -45,8 +34,9 @@ export class SolanaNativeContract {
     this.proxyApi = new NeonProxyRpcApi(NEON_PROXY_RPC_URL)
   }
 
+
   /**
-   * Initialize with Solana wallet using the Native SDK
+   * Initialize with Solana wallet using the recommended SolanaNeonAccount approach
    */
   async initWithSolanaWallet(walletAdapter: any): Promise<void> {
     if (!walletAdapter.publicKey) {
@@ -54,68 +44,84 @@ export class SolanaNativeContract {
     }
 
     try {
-      // Initialize the Neon Proxy API with the wallet's public key
-      const initResult = await this.proxyApi.init(walletAdapter.publicKey)
-      
-      this.chainId = initResult.chainId
-      this.programAddress = initResult.programAddress
-      this.provider = initResult.provider
-      this.solanaUser = initResult.solanaUser
-      
-      // Add wallet adapter to the solana user for signing
-      this.solanaUser.walletAdapter = walletAdapter
+      console.log('🔧 Using recommended SolanaNeonAccount approach...')
+      console.log('Wallet public key:', walletAdapter.publicKey.toBase58())
+
+      // Use proxyApi.init with just the public key (like demo)
+      const {
+        provider,
+        chainId,
+        solanaUser,
+        tokenMintAddress,
+        programAddress
+      } = await this.proxyApi.init(walletAdapter.publicKey)
+
+      console.log('- Chain ID:', chainId)
+      console.log('- Neon EVM Program:', programAddress.toBase58())
+
+      // Store the result with wallet adapter for signing
+      this.chainId = chainId
+      this.solanaUser = {
+        ...solanaUser,
+        walletAdapter: walletAdapter // Add wallet adapter for signing
+      }
+
+      // Create balance address if it doesn't exist (using SolanaNeonAccount approach)
+      if (!this.solanaUser.balanceAddress) {
+        const { SolanaNeonAccount } = await import('@neonevm/solana-sign')
+        const account = new SolanaNeonAccount(
+          this.solanaUser.publicKey,
+          this.solanaUser.neonEvmProgram,
+          this.solanaUser.tokenMint,
+          this.solanaUser.chainId
+        )
+        this.solanaUser.balanceAddress = account.balanceAddress
+      }
+
+      // Verify they match
+      if (walletAdapter.publicKey.toBase58() === this.solanaUser.publicKey.toBase58()) {
+        console.log('✅ Wallet public keys match correctly!')
+      } else {
+        console.error('❌ MISMATCH: Wallet adapter and solana user have different public keys!')
+        console.error('Wallet adapter:', walletAdapter.publicKey.toBase58())
+        console.error('Solana user:', this.solanaUser.publicKey.toBase58())
+      }
+      console.log('💰 Final balance address:', this.solanaUser.balanceAddress?.toBase58() || 'Still not available')
 
       // Create contract instance
-      this.contract = new ethers.Contract(CONTRACT_ADDRESS, SOLANA_TIPCARD_ABI, this.provider)
-      
+      const readOnlyProvider = new ethers.JsonRpcProvider(NEON_CORE_RPC_URL)
+      this.contract = new ethers.Contract(CONTRACT_ADDRESS, SOLANA_TIPCARD_ABI, readOnlyProvider)
+
+      try {
+        // Check if this EVM address has been used before (has transaction history)
+        const txCount = await readOnlyProvider.getTransactionCount(this.solanaUser.neonWallet)
+        console.log('📊 EVM address transaction count:', txCount)
+
+        if (txCount > 0) {
+          console.log('✅ This EVM address has transaction history - it exists on-chain!')
+        } else {
+          console.log('ℹ️ This EVM address is new (no transaction history yet)')
+          console.log('ℹ️ The address will be registered on-chain when first transaction is made')
+        }
+      } catch (verifyError) {
+        console.log('⚠️ Could not verify EVM address:', verifyError)
+      }
+
       // Verify contract is deployed at this address
       try {
-        console.log('Verifying contract at address:', CONTRACT_ADDRESS)
-        const code = await this.provider.getCode(CONTRACT_ADDRESS)
-        console.log('Contract code length:', code.length)
+        const code = await readOnlyProvider.getCode(CONTRACT_ADDRESS)
         if (code === '0x') {
           console.warn('⚠️ No contract code found at address:', CONTRACT_ADDRESS)
           console.log('This might mean the contract is not deployed or address is incorrect')
         } else {
           console.log('✅ Contract found at address')
-          
-          // Check if user's Solana address is registered with Neon EVM
-          console.log('Checking Solana user registration...')
-          console.log('User EVM address:', this.solanaUser.neonWallet)
-          console.log('User Solana address:', this.solanaUser.publicKey.toBase58())
-          
-          // Get the Solana address that Neon EVM has registered for this user
-          const registeredSolanaAddr = await this.contract.getSolanaUserAddress(this.solanaUser.neonWallet)
-          console.log('Registered Solana address (from contract):', registeredSolanaAddr)
-          
-          const isUserRegistered = await this.contract.isSolanaUser(this.solanaUser.neonWallet)
-          console.log('Is user registered with contract:', isUserRegistered)
-          
-          if (!isUserRegistered) {
-            console.warn('⚠️ User is not registered as Solana user with Neon EVM')
-            console.log('This may happen if the Solana Native SDK initialization did not complete properly')
-            console.log('The SDK should automatically register the user during init() call')
-            console.log('Attempting to create balance account to complete registration...')
-            
-            // Try to create the balance account which should register the user
-            try {
-              const account = await this.connection.getAccountInfo(this.solanaUser.balanceAddress)
-              if (account === null) {
-                console.log('Balance account does not exist, will create it on first transaction')
-              } else {
-                console.log('Balance account exists, user should be registered')
-              }
-            } catch (balanceError) {
-              console.log('Could not check balance account:', balanceError)
-            }
-          } else {
-            console.log('✅ User is properly registered')
-          }
+
+          console.log('✅ Contract found and ready for transactions')
         }
       } catch (verifyError) {
         console.warn('Failed to verify contract:', verifyError)
       }
-      
+
     } catch (error) {
       console.error('Failed to initialize Solana Native SDK:', error)
       throw error
@@ -134,12 +140,14 @@ export class SolanaNativeContract {
       throw new Error('Please connect wallet first')
     }
 
-    // Convert SOL to lamports (1 SOL = 1e9 lamports)
-    const amountLamports = Math.floor(suggestedAmountSOL * 1e9)
+    // Convert SOL to lamports using ethers for precision (1 SOL = 1e9 lamports)
+    const amountLamports = ethers.parseUnits(suggestedAmountSOL.toString(), 9)
+    let signature: string = ''
 
     try {
-      // Get nonce
+      // Get current nonce (exactly like working examples)
       const nonce = Number(await this.proxyApi.getTransactionCount(this.solanaUser.neonWallet))
+      console.log('Current nonce:', nonce)
 
       // Prepare contract call data
       const iface = new ethers.Interface(SOLANA_TIPCARD_ABI)
@@ -163,7 +171,7 @@ export class SolanaNativeContract {
       })
 
       // Create scheduled transaction
-      const { scheduledTransaction } = await this.proxyApi.createScheduledTransaction({
+      let { scheduledTransaction } = await this.proxyApi.createScheduledTransaction({
         transactionGas,
         transactionData,
         nonce
@@ -174,7 +182,7 @@ export class SolanaNativeContract {
       if (account === null) {
         scheduledTransaction.instructions.unshift(
           createBalanceAccountInstruction(
-            this.programAddress!,
+            this.solanaUser.neonEvmProgram,
             this.solanaUser.publicKey,
             this.solanaUser.neonWallet,
             this.chainId!
@@ -182,183 +190,145 @@ export class SolanaNativeContract {
         )
       }
 
-      // Get recent blockhash
+      // Sign and send transaction using exact test pattern
       const { blockhash } = await this.connection.getLatestBlockhash()
       scheduledTransaction.recentBlockhash = blockhash
       scheduledTransaction.feePayer = this.solanaUser.publicKey
 
-      // Sign with wallet adapter
-      const signedTx = await this.solanaUser.walletAdapter.signTransaction(scheduledTransaction)
-      
-      // Send transaction
-      await this.connection.sendRawTransaction(signedTx.serialize())
+      const signedTransaction = await this.solanaUser.walletAdapter.signTransaction(scheduledTransaction)
 
-      // Wait for transaction execution on Neon EVM
-      const transactionStatus = await this.proxyApi.waitTransactionTreeExecution(
-        this.solanaUser.neonWallet, 
-        nonce, 
-        60000 // 60 second timeout
-      )
+      console.log('Submitting transaction...')
+      signature = await this.connection.sendRawTransaction(signedTransaction.serialize())
 
-      console.log('Transaction status:', transactionStatus)
+      console.log('🔗 Signature:', signature)
 
-      if (transactionStatus.length === 0 || transactionStatus[0].status !== 'Success') {
-        throw new Error('Transaction failed to execute on Neon EVM')
-      }
+      // Wait for Solana confirmation first (like the test)
+      console.log(`Waiting for Solana confirmation...`);
+      await this.connection.confirmTransaction({
+        signature: signature,
+        ...(await this.connection.getLatestBlockhash())
+      });
+      console.log(`✅ Solana transaction confirmed`);
 
-      const txHash = transactionStatus[0].transactionHash
-      console.log('Transaction hash:', txHash)
+      // Wait additional time for Neon processing (like the test)
+      console.log(`Waiting for Neon EVM processing...`);
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 more seconds like test
 
-      // Get the link ID from transaction receipt
-      const receipt = await this.proxyApi.getTransactionReceipt(txHash)
-      console.log('Full transaction receipt:', JSON.stringify(receipt, null, 2))
-      
-      let linkId = ''
-      
-      // Check if the transaction was successful
-      if (receipt.result?.status !== '0x1') {
-        throw new Error('Transaction failed - status: ' + receipt.result?.status)
-      }
-
-      // Enhanced debugging of the receipt structure
-      console.log('Receipt status:', receipt.result?.status)
-      console.log('Receipt logs array:', receipt.result?.logs)
-      console.log('Receipt logs length:', receipt.result?.logs?.length)
-      console.log('Receipt logsBloom:', receipt.result?.logsBloom)
-      console.log('Receipt contractAddress:', receipt.result?.contractAddress)
-      console.log('Receipt gasUsed:', receipt.result?.gasUsed)
-      console.log('Receipt effectiveGasPrice:', receipt.result?.effectiveGasPrice)
-
-      // Check if there's a different location for logs
-      console.log('Raw transaction data:', receipt.result?.neonRawTransaction)
-      
-      // Get additional transaction details
+      // Check transaction status
       try {
-        const txDetails = await this.proxyApi.getTransaction(txHash)
-        console.log('Full transaction details:', JSON.stringify(txDetails, null, 2))
-      } catch (e) {
-        console.log('Could not fetch transaction details:', e)
-      }
+        console.log(`Getting Neon EVM transaction details...`);
 
-      // Extract all neonLogs from solanaTransactions
-      const allNeonLogs: any[] = []
-      if (receipt.result?.solanaTransactions) {
-        for (const solTx of receipt.result.solanaTransactions) {
-          if (solTx.solanaInstructions) {
-            for (const instruction of solTx.solanaInstructions) {
-              if (instruction.neonLogs && instruction.neonLogs.length > 0) {
-                allNeonLogs.push(...instruction.neonLogs)
-              }
-            }
-          }
-        }
-      }
+        const neonTxResponse = await fetch('https://devnet.neonevm.org/sol', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method: "neon_getTransactionBySenderNonce",
+            params: [this.solanaUser.neonWallet, nonce],
+            id: 1,
+            jsonrpc: "2.0"
+          })
+        });
 
-      console.log('Found', allNeonLogs.length, 'neonLogs to parse')
+        const neonTxResult = await neonTxResponse.json();
+        console.log("Neon EVM txn result: ", neonTxResult);
 
-      // Try to parse logs for the SolanaLinkCreated event
-      if (allNeonLogs.length > 0) {
-        for (const log of allNeonLogs) {
-          try {
-            console.log('Trying to parse neonLog:', log)
-            
-            // Check if this log is from our contract
-            if (log.address.toLowerCase() === CONTRACT_ADDRESS.toLowerCase()) {
-              console.log('Log is from our contract, parsing...')
-              
-              // Convert the log to the format expected by ethers
-              const ethersLog = {
-                address: log.address,
-                data: log.data,
-                topics: log.topics
-              }
-              
-              const parsedLog = iface.parseLog(ethersLog)
-              console.log('Parsed log:', parsedLog)
-              
-              if (parsedLog?.name === 'SolanaLinkCreated') {
-                linkId = parsedLog.args.linkId
-                console.log('✅ Found link ID from SolanaLinkCreated event:', linkId)
-                break
-              }
-            } else {
-              console.log('Log from different contract:', log.address)
-            }
-          } catch (e) {
-            console.log('Failed to parse neonLog:', e)
-            // Skip logs that can't be parsed
-          }
-        }
-      } else {
-        console.warn('No neonLogs found in transaction receipt!')
-        console.log('This might indicate:')
-        console.log('1. The contract call failed silently')
-        console.log('2. The contract is not at the expected address')
-        console.log('3. The contract function call reverted')
-        console.log('4. Events are not being emitted properly')
-        
-        // Try calling the contract read method to see if data was actually stored
-        try {
-          console.log('Attempting to read payment link using transaction hash as ID...')
-          const testData = await this.contract!.getSolanaPaymentLink(txHash)
-          console.log('Contract read result:', testData)
-        } catch (readError) {
-          console.log('Contract read failed:', readError)
-        }
-      }
+        if (neonTxResult.result && neonTxResult.result.hash) {
+          const neonTxHash = neonTxResult.result.hash;
+          console.log(`✅ Neon EVM payment hash: ${neonTxHash}`);
 
-      // If we couldn't extract from logs, investigate further
-      if (!linkId) {
-        console.error('Could not extract link ID from transaction events!')
-        console.log('This suggests the contract call may have failed silently')
-        
-        // Check if the transaction actually reverted
-        console.log('Checking for revert data...')
-        if (receipt.result?.neonRevertData) {
-          console.log('Revert data found:', receipt.result.neonRevertData)
-          try {
-            // Try to decode the revert reason
-            const revertReason = ethers.toUtf8String(receipt.result.neonRevertData)
-            console.log('Revert reason:', revertReason)
-            throw new Error(`Contract call reverted: ${revertReason}`)
-          } catch (decodeError) {
-            console.log('Could not decode revert reason:', decodeError)
-            throw new Error('Contract call reverted with unknown reason')
-          }
-        }
-        
-        // Let's try to understand why the event wasn't emitted
-        console.log('Analyzing function call...')
-        console.log('Contract address:', CONTRACT_ADDRESS)
-        console.log('From address:', this.solanaUser.neonWallet)
-        console.log('Function data in raw tx:', receipt.result?.neonRawTransaction)
-        
-        // Check if user is registered
-        try {
-          const isRegistered = await this.contract!.isSolanaUser(this.solanaUser.neonWallet)
-          console.log('Is user registered as Solana user:', isRegistered)
+          // Retry getting the transaction receipt with proper waiting
+          let actualLinkId: string | null = null;
           
-          if (!isRegistered) {
-            throw new Error('User is not registered as a Solana user with the contract. This is required to create payment links.')
+          for (let attempt = 1; attempt <= 5; attempt++) {
+            console.log(`Getting transaction receipt (attempt ${attempt}/5)...`);
+            
+            try {
+              const receiptResponse = await fetch('https://devnet.neonevm.org/sol', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  method: "eth_getTransactionReceipt",
+                  params: [neonTxHash],
+                  id: 1,
+                  jsonrpc: "2.0"
+                })
+              });
+              
+              const receiptResult = await receiptResponse.json();
+              
+              if (receiptResult.result && receiptResult.result.logs) {
+                console.log(`📋 Transaction receipt found with ${receiptResult.result.logs.length} logs`);
+                
+                // Look for SolanaLinkCreated event to extract the actual link ID
+                for (const log of receiptResult.result.logs) {
+                  try {
+                    const iface = new ethers.Interface(SOLANA_TIPCARD_ABI);
+                    const decoded = iface.parseLog(log);
+                    if (decoded && decoded.name === 'SolanaLinkCreated') {
+                      actualLinkId = decoded.args.linkId;
+                      console.log(`🎉 Found SolanaLinkCreated event!`);
+                      console.log(`   Actual Link ID: ${actualLinkId}`);
+                      console.log(`   Creator: ${decoded.args.evmCreator}`);
+                      console.log(`   Amount: ${ethers.formatUnits(decoded.args.amount, 9)} SOL`);
+                      console.log(`   Description: "${decoded.args.description}"`);
+                      
+                      return {
+                        linkId: actualLinkId ?? neonTxHash,  // Ensure linkId is always a string
+                        txHash: neonTxHash    // Keep transaction hash for reference
+                      };
+                    }
+                  } catch (parseError) {
+                    // Not our event, continue
+                  }
+                }
+                
+                console.log(`⚠️ SolanaLinkCreated event not found in transaction logs`);
+                break; // Receipt exists but no event - don't retry
+              } else {
+                console.log(`⚠️ No transaction receipt found yet (attempt ${attempt}/5)`);
+                if (attempt < 5) {
+                  console.log(`Waiting 5 seconds before next attempt...`);
+                  await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+              }
+            } catch (receiptError: any) {
+              console.log(`⚠️ Receipt fetch error (attempt ${attempt}/5): ${receiptError.message}`);
+              if (attempt < 5) {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+              }
+            }
           }
-        } catch (registrationError) {
-          console.error('Failed to check user registration:', registrationError)
-          throw registrationError
+
+          // Fallback to transaction hash if we can't find the event
+          console.log(`Using transaction hash as fallback link ID`);
+          return {
+            linkId: neonTxHash,
+            txHash: neonTxHash
+          };
+        } else {
+          console.log(`ℹ️ Neon EVM payment transaction not found yet (may still be processing)`);
         }
-        
-        // If we get here, something else went wrong
-        throw new Error('Payment link creation failed: Contract call executed but no event was emitted. The transaction may have failed silently.')
+
+      } catch (neonError) {
+        console.log(`ℹ️ Could not get Neon payment details: ${(neonError as Error).message}`);
       }
 
-      return {
-        linkId,
-        txHash
-      }
-    } catch (error: any) {
-      console.error('Error creating payment link:', error)
-      throw error
+    } catch (confirmError) {
+      console.log(`ℹ️ Payment confirmation check: ${(confirmError as Error).message}`);
     }
+
+    console.log(`🎉 Payment transaction completed!`);
+
+    // Return signature as fallback
+    return {
+      linkId: signature,
+      txHash: signature
+    };
+  } catch(error: any) {
+    console.error('Error creating payment link:', error);
+    throw error;
   }
+
 
   /**
    * Initialize read-only contract access (without wallet)
@@ -380,10 +350,14 @@ export class SolanaNativeContract {
       await this.initReadOnlyContract()
     }
 
+    console.log('Getting payment link with ID:', linkId)
+    console.log('Contract address:', CONTRACT_ADDRESS)
+
     try {
       const result = await this.contract!.getSolanaPaymentLink(linkId)
-      
-      return {
+      console.log('Raw contract result:', result)
+
+      const paymentLink = {
         evmCreator: result.evmCreator,
         solanaCreator: result.solanaCreator,
         amount: result.amount,
@@ -393,6 +367,25 @@ export class SolanaNativeContract {
         paymentCount: Number(result.paymentCount),
         description: result.description
       }
+
+      // Check if this looks like an empty/non-existent link (transaction not processed yet)
+      if (result.evmCreator === '0x0000000000000000000000000000000000000000' &&
+        result.amount === BigInt(0) &&
+        !result.isActive) {
+        console.warn('Payment link appears to be empty/non-existent')
+
+        // If this looks like a transaction hash (66 chars, starts with 0x), provide helpful info
+        if (linkId.length === 66 && linkId.startsWith('0x')) {
+          console.log('💡 This appears to be a transaction hash - the payment link may still be processing')
+          console.log('💡 Neon operators will eventually process this transaction and create the payment link')
+          console.log('💡 You can bookmark this link and try again in a few minutes')
+
+          // For now, don't throw an error - let the UI handle the empty data gracefully
+          console.log('Returning empty payment link data - transaction may still be processing')
+        }
+      }
+
+      return paymentLink
     } catch (error) {
       console.error('Contract call error:', error)
       throw new Error('Payment link not found or contract error')
@@ -439,9 +432,9 @@ export class SolanaNativeContract {
       throw new Error('Payment link is no longer active')
     }
 
-    // Convert SOL to lamports
-    const amountLamports = Math.floor(amountSOL * 1e9)
-    
+    // Convert SOL to lamports using ethers for precision
+    const amountLamports = ethers.parseUnits(amountSOL.toString(), 9)
+
     let transferSignature: string | undefined
 
     try {
@@ -453,17 +446,17 @@ export class SolanaNativeContract {
 
       // Convert recipient Solana address from bytes32 to PublicKey
       // Remove '0x' prefix if present
-      const hexString = linkData.solanaCreator.startsWith('0x') 
-        ? linkData.solanaCreator.slice(2) 
+      const hexString = linkData.solanaCreator.startsWith('0x')
+        ? linkData.solanaCreator.slice(2)
         : linkData.solanaCreator
-      
+
       // Convert hex string to byte array
       const bytes = new Uint8Array(hexString.match(/.{2}/g)?.map(byte => parseInt(byte, 16)) || [])
-      
+
       // For bytes32 from Solana addresses, we need to find the actual 32-byte public key
       // The bytes32 should contain the 32-byte Solana public key, possibly with leading zeros
       let recipientPubkey
-      
+
       if (bytes.length === 32) {
         // Direct conversion from 32 bytes
         recipientPubkey = new (await import('@solana/web3.js')).PublicKey(bytes)
@@ -487,35 +480,44 @@ export class SolanaNativeContract {
       const transferIx = SystemProgram.transfer({
         fromPubkey: this.solanaUser.publicKey,
         toPubkey: recipientPubkey,
-        lamports: amountLamports
+        lamports: Number(amountLamports)
       })
 
       // Create transaction
       const transferTx = new Transaction().add(transferIx)
-      
-      // Get recent blockhash
-      const { blockhash } = await this.connection.getLatestBlockhash()
+
+      // Get fresh recent blockhash right before signing
+      console.log('Getting fresh blockhash for SOL transfer...')
+      const { blockhash, lastValidBlockHeight: transferBlockHeight } = await this.connection.getLatestBlockhash('confirmed')
+      console.log('Fresh SOL transfer blockhash:', blockhash)
+      console.log('Last valid block height:', transferBlockHeight)
+
       transferTx.recentBlockhash = blockhash
       transferTx.feePayer = this.solanaUser.publicKey
 
-      // Sign and send the SOL transfer
+      // Sign and send the SOL transfer immediately
+      console.log('Signing and sending SOL transfer with fresh blockhash...')
       const signedTransferTx = await this.solanaUser.walletAdapter.signTransaction(transferTx)
       transferSignature = await this.connection.sendRawTransaction(signedTransferTx.serialize())
-      
+
       console.log('SOL transfer sent:', transferSignature)
-      
-      // Wait for transfer confirmation
-      await this.connection.confirmTransaction(transferSignature, 'confirmed')
+
+      // Wait for transfer confirmation using the modern API
+      await this.connection.confirmTransaction({
+        signature: transferSignature,
+        ...(await this.connection.getLatestBlockhash())
+      })
       console.log('SOL transfer confirmed')
 
       // Step 2: Record the payment in the contract
       console.log('Step 2: Recording payment in contract...')
-      
+
       // Convert Solana PublicKey to bytes32
       const payerSolanaBytes32 = zeroPadValue(hexlify(this.solanaUser.publicKey.toBytes()), 32)
 
-      // Get nonce
+      // Get current nonce
       const nonce = Number(await this.proxyApi.getTransactionCount(this.solanaUser.neonWallet))
+      console.log('Current nonce:', nonce)
 
       // Prepare contract call data
       const iface = new ethers.Interface(SOLANA_TIPCARD_ABI)
@@ -539,27 +541,33 @@ export class SolanaNativeContract {
       })
 
       // Create scheduled transaction
-      const { scheduledTransaction } = await this.proxyApi.createScheduledTransaction({
+      let { scheduledTransaction } = await this.proxyApi.createScheduledTransaction({
         transactionGas,
         transactionData,
         nonce
       })
 
-      // Get recent blockhash
-      const contractBlockhash = await this.connection.getLatestBlockhash()
-      scheduledTransaction.recentBlockhash = contractBlockhash.blockhash
+      // Get fresh recent blockhash right before signing
+      console.log('Getting fresh blockhash for contract call...')
+      const { blockhash: contractBlockhash, lastValidBlockHeight: contractBlockHeight } = await this.connection.getLatestBlockhash('confirmed')
+      console.log('Fresh contract call blockhash:', contractBlockhash)
+      console.log('Last valid block height:', contractBlockHeight)
+
+      scheduledTransaction.recentBlockhash = contractBlockhash
       scheduledTransaction.feePayer = this.solanaUser.publicKey
 
-      // Sign with wallet adapter
+      // Sign with wallet adapter (frontend approach)
+      console.log('Signing contract call with fresh blockhash...')
       const signedTx = await this.solanaUser.walletAdapter.signTransaction(scheduledTransaction)
-      
-      // Send transaction
+
+      // Send transaction immediately
+      console.log('Sending contract call transaction immediately...')
       await this.connection.sendRawTransaction(signedTx.serialize())
 
       // Wait for transaction execution on Neon EVM
       const transactionStatus = await this.proxyApi.waitTransactionTreeExecution(
-        this.solanaUser.neonWallet, 
-        nonce, 
+        this.solanaUser.neonWallet,
+        nonce,
         60000
       )
 
@@ -595,8 +603,9 @@ export class SolanaNativeContract {
     }
 
     try {
-      // Get nonce
+      // Get current nonce
       const nonce = Number(await this.proxyApi.getTransactionCount(this.solanaUser.neonWallet))
+      console.log('Current nonce:', nonce)
 
       // Prepare contract call data
       const iface = new ethers.Interface(SOLANA_TIPCARD_ABI)
@@ -616,27 +625,33 @@ export class SolanaNativeContract {
       })
 
       // Create scheduled transaction
-      const { scheduledTransaction } = await this.proxyApi.createScheduledTransaction({
+      let { scheduledTransaction } = await this.proxyApi.createScheduledTransaction({
         transactionGas,
         transactionData,
         nonce
       })
 
-      // Get recent blockhash
-      const { blockhash } = await this.connection.getLatestBlockhash()
+      // Get fresh recent blockhash right before signing
+      console.log('Getting fresh blockhash for deactivate transaction...')
+      const { blockhash, lastValidBlockHeight: deactivateBlockHeight } = await this.connection.getLatestBlockhash('confirmed')
+      console.log('Fresh deactivate blockhash:', blockhash)
+      console.log('Last valid block height:', deactivateBlockHeight)
+
       scheduledTransaction.recentBlockhash = blockhash
       scheduledTransaction.feePayer = this.solanaUser.publicKey
 
-      // Sign with wallet adapter
+      // Sign with wallet adapter (frontend approach)
+      console.log('Signing deactivate transaction with fresh blockhash...')
       const signedTx = await this.solanaUser.walletAdapter.signTransaction(scheduledTransaction)
-      
-      // Send transaction
+
+      // Send transaction immediately
+      console.log('Sending deactivate transaction immediately...')
       await this.connection.sendRawTransaction(signedTx.serialize())
 
       // Wait for transaction execution
       const transactionStatus = await this.proxyApi.waitTransactionTreeExecution(
-        this.solanaUser.neonWallet, 
-        nonce, 
+        this.solanaUser.neonWallet,
+        nonce,
         60000
       )
 

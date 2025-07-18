@@ -124,7 +124,10 @@ contract SolanaTipCard {
             paymentAmount = link.amount;
         }
         
-        // SOL transfer - use system program (handled differently)
+        // Note: SOL balance checking would be done by the System Program during transfer
+        // If insufficient balance, the transfer will fail and revert
+        
+        // Execute SOL transfer via System Program
         _transferSOL(_payerSolanaAccount, link.solanaCreator, paymentAmount);
         
         // Update link statistics
@@ -134,16 +137,81 @@ contract SolanaTipCard {
         emit SolanaPaymentReceived(_linkId, _payerSolanaAccount, link.solanaCreator, paymentAmount);
     }
     
+    /**
+     * @dev Convenience function that automatically uses caller's Solana address for payment
+     */
+    function paySolanaLinkAuto(bytes32 _linkId, uint64 _amount) external {
+        // Get caller's Solana address automatically
+        bytes32 payerSolanaAddress = SOLANA_NATIVE.solanaAddress(msg.sender);
+        if (payerSolanaAddress == bytes32(0)) revert SolanaUserNotRegistered();
+        
+        // Execute the same logic as paySolanaLink but with auto-resolved address
+        SolanaPaymentLink storage link = paymentLinks[_linkId];
+        
+        // Validate link exists and is active
+        if (link.evmCreator == address(0)) revert LinkNotFound();
+        if (!link.isActive) revert LinkInactive();
+        
+        // Determine payment amount
+        uint64 paymentAmount;
+        if (link.isFlexible) {
+            if (_amount == 0) revert InvalidAmount();
+            paymentAmount = _amount;
+        } else {
+            paymentAmount = link.amount;
+        }
+        
+        // Note: SOL balance checking would be done by the System Program during transfer
+        // If insufficient balance, the transfer will fail and revert
+        
+        // Execute SOL transfer via System Program
+        _transferSOL(payerSolanaAddress, link.solanaCreator, paymentAmount);
+        
+        // Update link statistics
+        link.totalReceived += paymentAmount;
+        link.paymentCount++;
+        
+        emit SolanaPaymentReceived(_linkId, payerSolanaAddress, link.solanaCreator, paymentAmount);
+    }
+    
     function _transferSOL(bytes32 _from, bytes32 _to, uint64 _amount) internal {
-        // For SOL transfers, we need to use the system program
-        // This is a simplified implementation - in production you'd need proper SOL transfer logic
-        // The actual implementation would use CallSolana to invoke the System Program
+        // Use Neon's CALL_SOLANA to execute System Program transfer
+        // System Program ID: 11111111111111111111111111111111 (all 1s in base58)
+        // In hex: 0x0000000000000000000000000000000000000000000000000000000000000000
+        bytes32 systemProgramId = 0x0000000000000000000000000000000000000000000000000000000000000000;
         
-        // Check if sender has sufficient SOL balance (simplified check)
-        // In practice, you'd query the actual SOL balance from Solana
+        // Create accounts for transfer instruction
+        ICallSolana.AccountMeta[] memory accounts = new ICallSolana.AccountMeta[](2);
+        accounts[0] = ICallSolana.AccountMeta({
+            account: _from,
+            is_signer: true,
+            is_writable: true
+        });
+        accounts[1] = ICallSolana.AccountMeta({
+            account: _to, 
+            is_signer: false,
+            is_writable: true
+        });
         
-        // For now, we'll assume the transfer succeeds
-        // Real implementation would use CALL_SOLANA to execute system program transfer
+        // Build transfer instruction data (instruction discriminator + lamports)
+        bytes memory instructionData = abi.encodePacked(
+            uint32(2),     // Transfer instruction discriminator for System Program
+            _amount        // Amount in lamports
+        );
+        
+        // Create the instruction
+        ICallSolana.Instruction memory instruction = ICallSolana.Instruction({
+            program_id: systemProgramId,
+            accounts: accounts,
+            instruction_data: instructionData
+        });
+        
+        // Execute the SOL transfer via System Program
+        try CALL_SOLANA.execute(0, instruction) {
+            // Transfer successful
+        } catch {
+            revert TransferFailed();
+        }
     }
     
     
@@ -179,9 +247,9 @@ contract SolanaTipCard {
     }
     
     function getSOLBalance(bytes32 _account) external view returns (uint64) {
-        // Query SOL balance for a Solana account
-        // This would need to be implemented using Solana system program calls
-        // For now, return 0 as placeholder
+        // SOL balance querying would require a different precompile or method
+        // For now, return 0 as placeholder - this would need proper implementation
+        // using Solana account info queries
         return 0;
     }
 }

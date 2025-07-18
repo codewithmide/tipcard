@@ -80,9 +80,9 @@ const config = {
     neondevnet: {
       type: "http",
       chainType: "generic",
-      url: "https://devnet.neonevm.org",
+      url: "https://devnet.neonevm.org/sol",
       accounts: [],
-      chainId: 245022926,
+      chainId: 245022927,
       allowUnlimitedContractSize: false,
       gasMultiplier: 2,
       maxFeePerGas: '10000000000000',
