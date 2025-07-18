@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'TipCard - One-Click Crypto Payment Links',
-  description: 'Create instant crypto payment links powered by Neon EVM and Solana',
+  description: 'Create instant payment links powered by Neon EVM for Solana users',
 }
 
 export default function RootLayout({

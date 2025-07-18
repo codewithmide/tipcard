@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { Copy, CheckCircle, ExternalLink, DollarSign, User, Clock, Trash2 } from 'lucide-react'
+import { Copy, CheckCircle, ExternalLink, DollarSign, User, Clock, Trash2, RefreshCw } from 'lucide-react'
 import { solanaNativeContract, PaymentLink } from '@/utils/solana-native-contract'
 import { useToast } from '@/components/Toast'
 
@@ -11,20 +11,135 @@ interface DisplayLink extends PaymentLink {
   url: string
 }
 
+interface CachedDisplayLink {
+  id: string
+  url: string
+  evmCreator: string
+  solanaCreator: string
+  amount: string // BigInt stored as string
+  isFlexible: boolean
+  isActive: boolean
+  totalReceived: string // BigInt stored as string
+  paymentCount: number
+  description: string
+}
+
+interface CachedData {
+  links: CachedDisplayLink[]
+  timestamp: number
+  userAddress: string
+  solanaPublicKey: string
+}
+
 export const MyLinks = () => {
   const { publicKey, wallet } = useWallet()
   const { showToast } = useToast()
   const [links, setLinks] = useState<DisplayLink[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
+  // Cache duration: 5 minutes
+  const CACHE_DURATION = 5 * 60 * 1000
+
+  // Helper functions to handle BigInt serialization
+  const linkToCache = (link: DisplayLink): CachedDisplayLink => ({
+    ...link,
+    amount: link.amount.toString(),
+    totalReceived: link.totalReceived.toString()
+  })
+
+  const linkFromCache = (cached: CachedDisplayLink): DisplayLink => ({
+    ...cached,
+    amount: BigInt(cached.amount),
+    totalReceived: BigInt(cached.totalReceived)
+  })
 
   useEffect(() => {
     if (publicKey) {
-      fetchMyLinks()
+      // Try to load from cache first without wallet initialization
+      loadLinksFromCacheFirst()
     }
   }, [publicKey])
 
-  const fetchMyLinks = async () => {
+  const loadLinksFromCacheFirst = async () => {
+    if (!publicKey) return
+
+    const publicKeyStr = publicKey.toBase58()
+    
+    // Look for cached data by Solana public key
+    const addressMappingKey = `evm_address_${publicKeyStr}`
+    const cachedEvmAddress = localStorage.getItem(addressMappingKey)
+    
+    if (cachedEvmAddress) {
+      // We have the EVM address, check for cached links
+      const cacheKey = getCacheKey(cachedEvmAddress)
+      const cachedData = loadFromCache(cachedEvmAddress)
+      
+      if (cachedData && isCacheValid(cachedData, cachedEvmAddress) && cachedData.solanaPublicKey === publicKeyStr) {
+        // Found valid cache, load it
+        const displayLinks = cachedData.links.map(linkFromCache)
+        setLinks(displayLinks)
+        setLastUpdated(new Date(cachedData.timestamp))
+        return // Don't fetch from contract
+      }
+    }
+
+    // No valid cache found, proceed with wallet initialization and fetch
+    await loadLinksWithCache()
+  }
+
+  const getCacheKey = useCallback((userAddress: string) => {
+    return `payment_links_${userAddress}`
+  }, [])
+
+  const loadFromCache = useCallback((userAddress: string): CachedData | null => {
+    try {
+      const cached = localStorage.getItem(getCacheKey(userAddress))
+      if (cached) {
+        const data: CachedData = JSON.parse(cached)
+        return data
+      }
+    } catch (error) {
+      console.warn('Error loading from cache:', error)
+    }
+    return null
+  }, [getCacheKey])
+
+  const saveToCache = useCallback((userAddress: string, links: DisplayLink[]) => {
+    if (!publicKey) return
+    
+    try {
+      const publicKeyStr = publicKey.toBase58()
+      const cacheData: CachedData = {
+        links: links.map(linkToCache),
+        timestamp: Date.now(),
+        userAddress,
+        solanaPublicKey: publicKeyStr
+      }
+      
+      // Save the links cache
+      localStorage.setItem(getCacheKey(userAddress), JSON.stringify(cacheData))
+      
+      // Save the EVM address mapping for quick lookup
+      localStorage.setItem(`evm_address_${publicKeyStr}`, userAddress)
+      
+      setLastUpdated(new Date())
+    } catch (error) {
+      console.warn('Error saving to cache:', error)
+    }
+  }, [getCacheKey, publicKey])
+
+  const isCacheValid = useCallback((cachedData: CachedData, userAddress: string): boolean => {
+    if (!cachedData || cachedData.userAddress !== userAddress) {
+      return false
+    }
+    const now = Date.now()
+    return (now - cachedData.timestamp) < CACHE_DURATION
+  }, [CACHE_DURATION])
+
+  const loadLinksWithCache = async (forceRefresh = false) => {
     if (!publicKey) return
 
     setIsLoading(true)
@@ -39,11 +154,33 @@ export const MyLinks = () => {
       }
 
       if (!userAddress) {
-        // If no EVM address derived, show empty state
         setLinks([])
         return
       }
 
+      // Check cache first unless forced refresh
+      if (!forceRefresh) {
+        const cachedData = loadFromCache(userAddress)
+        if (cachedData && isCacheValid(cachedData, userAddress)) {
+          const displayLinks = cachedData.links.map(linkFromCache)
+          setLinks(displayLinks)
+          setLastUpdated(new Date(cachedData.timestamp))
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // Fetch from contract
+      await fetchFromContract(userAddress)
+    } catch (error) {
+      console.error('Error loading links:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const fetchFromContract = async (userAddress: string) => {
+    try {
       // Get user's payment links from contract
       const linkIds = await solanaNativeContract.getUserLinks(userAddress)
       const userLinks: DisplayLink[] = []
@@ -64,11 +201,26 @@ export const MyLinks = () => {
         }
       }
 
-      setLinks(userLinks.reverse()) // Show newest first
+      const sortedLinks = userLinks.reverse() // Show newest first
+      setLinks(sortedLinks)
+      saveToCache(userAddress, sortedLinks)
     } catch (error) {
-      console.error('Error fetching links:', error)
+      console.error('Error fetching from contract:', error)
+      throw error
+    }
+  }
+
+  const handleRefresh = async () => {
+    if (!publicKey) return
+    
+    setIsRefreshing(true)
+    try {
+      await loadLinksWithCache(true) // Force refresh
+      showToast('success', 'Refreshed', 'Payment history updated successfully')
+    } catch (error) {
+      showToast('error', 'Refresh Failed', 'Could not update payment history')
     } finally {
-      setIsLoading(false)
+      setIsRefreshing(false)
     }
   }
 
@@ -86,7 +238,9 @@ export const MyLinks = () => {
     try {
       await solanaNativeContract.deactivateLink(linkId)
       showToast('success', 'Link Deactivated', 'Payment link deactivated successfully!')
-      fetchMyLinks() // Refresh the list
+      
+      // Invalidate cache and refresh
+      await loadLinksWithCache(true)
     } catch (error) {
       console.error('Error deactivating link:', error)
       showToast('error', 'Deactivation Failed', error instanceof Error ? error.message : 'Unknown error')
@@ -113,13 +267,21 @@ export const MyLinks = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">My Payment Links</h2>
+        <div>
+          <h2 className="text-xl font-semibold">My Payment Links</h2>
+          {lastUpdated && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+            </p>
+          )}
+        </div>
         <button
-          onClick={fetchMyLinks}
-          disabled={isLoading}
-          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium py-2 px-4 rounded-lg transition-colors"
+          onClick={handleRefresh}
+          disabled={isLoading || isRefreshing}
+          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground font-medium py-2 px-4 rounded-lg transition-colors flex items-center space-x-2"
         >
-          {isLoading ? 'Loading...' : 'Refresh'}
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span>{isLoading ? 'Loading...' : isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
         </button>
       </div>
 

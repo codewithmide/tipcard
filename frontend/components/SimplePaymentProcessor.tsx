@@ -61,12 +61,8 @@ export const SimplePaymentProcessor = () => {
       
       // Check if this is a transaction hash (starts with 0x and is 66 chars) 
       if (id.length === 66 && id.startsWith('0x')) {
-        console.log('Loading contract payment link with ID:', id)
         try {
           data = await solanaNativeContract.getPaymentLink(id)
-          
-          // Note: We'll allow inactive links to be displayed but disable payment
-          console.log('Payment link data:', data)
           
         } catch (contractError) {
           console.error('Contract error:', contractError)
@@ -74,7 +70,6 @@ export const SimplePaymentProcessor = () => {
         }
       } else {
         // Try base64 demo format for backward compatibility
-        console.log('Trying to load as demo format:', id)
         try {
           const decoded = atob(id)
           const demoData = JSON.parse(decoded)
@@ -104,7 +99,6 @@ export const SimplePaymentProcessor = () => {
         }
       }
 
-      console.log('Loaded payment data:', data)
       setPaymentData(data)
       
       // If it's a fixed amount, set the custom amount
@@ -164,9 +158,6 @@ export const SimplePaymentProcessor = () => {
             paymentAmount
           )
 
-          console.log('Payment successful!')
-          console.log('SOL transfer signature:', result.transferSignature)
-          console.log('Contract recording:', result.txHash)
           setPaymentStatus('success')
           
           // Update balance
@@ -219,7 +210,6 @@ export const SimplePaymentProcessor = () => {
     )
 
     if (result.success) {
-      console.log('Direct payment successful:', result.signature)
       setPaymentStatus('success')
       
       // Update balance

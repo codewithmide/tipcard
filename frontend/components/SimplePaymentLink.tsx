@@ -185,13 +185,12 @@ export const SimplePaymentLink = () => {
       <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
         <div className="flex items-center space-x-2 mb-2">
           <Users className="w-5 h-5 text-green-500" />
-          <span className="font-medium text-green-500">How Solana Native Payment Links Work</span>
+          <span className="font-medium text-green-500">How it Works</span>
         </div>
         <div className="text-sm text-green-600 dark:text-green-400 space-y-1">
-          <p>• <strong>Pure Solana Experience:</strong> Use your Solana wallet (Phantom, Solflare, etc.)</p>
-          <p>• <strong>Smart Contract Power:</strong> Links are stored on-chain via Neon EVM</p>
-          <p>• <strong>Cross-chain Magic:</strong> Solana Native SDK bridges Solana ↔ EVM seamlessly</p>
-          <p>• <strong>You receive payments:</strong> {publicKey.toBase58().slice(0, 8)}...{publicKey.toBase58().slice(-8)}</p>
+          <p>• Use your Solana wallet (Phantom, Solflare, etc.)</p>
+          <p>• Create a payment link</p>
+          <p>• Start receiving payments</p>
         </div>
       </div>
 
@@ -292,7 +291,7 @@ export const SimplePaymentLink = () => {
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What is this payment for? (e.g., 'Coffee tip', 'Support my work', 'Invoice #123')"
+            placeholder="Coffee tip, Support my work, Invoice #123"
             rows={3}
             className="w-full p-3 bg-input border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary resize-none"
           />
@@ -381,7 +380,7 @@ export const SimplePaymentLink = () => {
           <div className="text-xs text-blue-600 dark:text-blue-400 space-y-1">
             <p>✅ Anyone with this link can send SOL to your wallet</p>
             <p>✅ Payments go directly to: {publicKey.toBase58().slice(0, 8)}...{publicKey.toBase58().slice(-8)}</p>
-            <p>✅ Powered by SolanaTipCard smart contract via Solana Native SDK</p>
+            <p>✅ Powered by TipCard smart contract via Solana Native SDK</p>
           </div>
         </div>
       )}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Header } from '@/components/Header'
 import { Footer } from '@/components/Footer'
 import { MyLinks } from '@/components/MyLinks'
@@ -10,6 +10,20 @@ import { SimplePaymentProcessor } from '@/components/SimplePaymentProcessor'
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'create' | 'pay' | 'history'>('create')
 
+  useEffect(() => {
+    // Check for payment ID in URL on component mount
+    const urlParams = new URLSearchParams(window.location.search)
+    const payParam = urlParams.get('pay')
+    
+    if (payParam && payParam.trim()) {
+      // If there's a payment ID, switch to Pay tab
+      setActiveTab('pay')
+    } else {
+      // Default to Create tab if no payment ID
+      setActiveTab('create')
+    }
+  }, [])
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
@@ -17,11 +31,8 @@ export default function Home() {
       <main className="flex-1 container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-neon-400 to-neon-600 bg-clip-text text-transparent">
-              TipCard
-            </h1>
             <p className="text-lg text-muted-foreground">
-              Create instant crypto payment links powered by Neon EVM and Solana
+              Create instant payment links powered by Neon EVM for Solana users
             </p>
           </div>
 
@@ -35,7 +46,7 @@ export default function Home() {
                     : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
                 }`}
               >
-                Create Payment Link
+                Create Link
               </button>
               <button
                 onClick={() => setActiveTab('pay')}

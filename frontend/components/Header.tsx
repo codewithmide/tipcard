@@ -18,26 +18,10 @@ export const Header = () => {
             <h1 className="text-xl font-bold">TipCard</h1>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <a
-              href="https://neonevm.org"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center space-x-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <span>Powered by Neon EVM</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-            
+          <div className="flex flex-col-reverse gap-2 items-center space-x-4">            
             <WalletMultiButton />
           </div>
         </div>
-        
-        {publicKey && (
-          <div className="mt-2 text-sm text-muted-foreground">
-            Connected: {publicKey.toBase58().slice(0, 8)}...{publicKey.toBase58().slice(-8)}
-          </div>
-        )}
       </div>
     </header>
   )
