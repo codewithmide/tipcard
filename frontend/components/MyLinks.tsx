@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { Copy, CheckCircle, ExternalLink, DollarSign, User, Clock, Trash2 } from 'lucide-react'
 import { solanaNativeContract, PaymentLink } from '@/utils/solana-native-contract'
+import { useToast } from '@/components/Toast'
 
 interface DisplayLink extends PaymentLink {
   id: string
@@ -12,6 +13,7 @@ interface DisplayLink extends PaymentLink {
 
 export const MyLinks = () => {
   const { publicKey, wallet } = useWallet()
+  const { showToast } = useToast()
   const [links, setLinks] = useState<DisplayLink[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -83,11 +85,11 @@ export const MyLinks = () => {
 
     try {
       await solanaNativeContract.deactivateLink(linkId)
-      alert('Payment link deactivated successfully!')
+      showToast('success', 'Link Deactivated', 'Payment link deactivated successfully!')
       fetchMyLinks() // Refresh the list
     } catch (error) {
       console.error('Error deactivating link:', error)
-      alert(`Failed to deactivate link: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      showToast('error', 'Deactivation Failed', error instanceof Error ? error.message : 'Unknown error')
     }
   }
 

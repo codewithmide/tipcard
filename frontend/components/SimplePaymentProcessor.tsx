@@ -6,9 +6,11 @@ import { CheckCircle, AlertCircle, DollarSign, User, Clock, Zap, Send } from 'lu
 import { SimpleWalletSigner } from '@/utils/simple-wallet-signer'
 import { solanaNativeContract, PaymentLink } from '@/utils/solana-native-contract'
 import { PublicKey } from '@solana/web3.js'
+import { useToast } from '@/components/Toast'
 
 export const SimplePaymentProcessor = () => {
   const { publicKey, wallet } = useWallet()
+  const { showToast } = useToast()
   const [linkId, setLinkId] = useState('')
   const [paymentData, setPaymentData] = useState<PaymentLink | null>(null)
   const [customAmount, setCustomAmount] = useState('')
@@ -125,7 +127,7 @@ export const SimplePaymentProcessor = () => {
     let paymentAmount: number
     if (paymentData.isFlexible) {
       if (!customAmount || parseFloat(customAmount) <= 0) {
-        alert('Please enter a valid amount to pay')
+        showToast('warning', 'Invalid Amount', 'Please enter a valid amount to pay')
         return
       }
       paymentAmount = parseFloat(customAmount)
@@ -171,16 +173,16 @@ export const SimplePaymentProcessor = () => {
           checkBalance()
           
           // Show detailed success message
-          let successMessage = `Payment successful!\n`
+          let successMessage = `Payment sent successfully!`
           if (result.transferSignature) {
-            successMessage += `SOL Transfer: ${result.transferSignature}\n`
+            successMessage += ` SOL Transfer completed.`
           }
           if (result.txHash && result.txHash !== 'contract-recording-failed') {
-            successMessage += `Contract Record: ${result.txHash}`
+            successMessage += ` Contract updated.`
           } else {
-            successMessage += `Note: Payment went through but contract recording may have failed`
+            successMessage += ` Payment went through but contract recording may have failed.`
           }
-          alert(successMessage)
+          showToast('success', 'Payment Successful!', successMessage)
           
         } catch (contractError) {
           // Fallback to direct SOL transfer if contract payment fails
@@ -224,7 +226,7 @@ export const SimplePaymentProcessor = () => {
       checkBalance()
       
       // Show success message
-      alert(`Payment successful! Sent ${paymentAmount} SOL to ${paymentData.solanaCreator.slice(0, 8)}...${paymentData.solanaCreator.slice(-8)}`)
+      showToast('success', 'Payment Successful!', `Sent ${paymentAmount} SOL to ${paymentData.solanaCreator.slice(0, 8)}...${paymentData.solanaCreator.slice(-8)}`)
     }
   }
 
@@ -235,11 +237,11 @@ export const SimplePaymentProcessor = () => {
     try {
       const result = await signer.requestAirdrop(publicKey)
       if (result.success) {
-        alert('Airdrop successful! Check your wallet balance.')
+        showToast('success', 'Airdrop Successful!', 'Check your wallet balance.')
         checkBalance()
       }
     } catch (error) {
-      alert(`Airdrop failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      showToast('error', 'Airdrop Failed', error instanceof Error ? error.message : 'Unknown error')
     } finally {
       setIsLoading(false)
     }

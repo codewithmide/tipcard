@@ -6,9 +6,11 @@ import { Copy, CheckCircle, Link, DollarSign, Shield, Users, Coins, AlertCircle,
 import { SimpleWalletSigner } from '@/utils/simple-wallet-signer'
 import { solanaNativeContract } from '@/utils/solana-native-contract'
 import { PublicKey } from '@solana/web3.js'
+import { useToast } from '@/components/Toast'
 
 export const SimplePaymentLink = () => {
   const { publicKey, wallet } = useWallet()
+  const { showToast } = useToast()
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
   const [isFlexible, setIsFlexible] = useState(true)
@@ -49,11 +51,11 @@ export const SimplePaymentLink = () => {
     try {
       const result = await signer.requestAirdrop(publicKey)
       if (result.success) {
-        alert('Airdrop successful! Check your wallet balance.')
+        showToast('success', 'Airdrop Successful!', 'Check your wallet balance.')
         checkBalance()
       }
     } catch (error) {
-      alert(`Airdrop failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      showToast('error', 'Airdrop Failed', error instanceof Error ? error.message : 'Unknown error')
     } finally {
       setIsLoading(false)
     }
@@ -64,7 +66,7 @@ export const SimplePaymentLink = () => {
 
     // For flexible links, amount can be empty
     if (!isFlexible && !amount) {
-      alert('Please enter an amount for fixed payment links')
+      showToast('warning', 'Amount Required', 'Please enter an amount for fixed payment links')
       return
     }
 
@@ -74,7 +76,7 @@ export const SimplePaymentLink = () => {
       const { balance, hasEnough } = await signer.checkSOLBalance(publicKey)
       
       if (!hasEnough) {
-        alert(`Insufficient SOL balance. You have ${balance.toFixed(4)} SOL but need at least 0.001 SOL for transaction fees. Please add SOL to your wallet or use the airdrop button.`)
+        showToast('warning', 'Insufficient SOL Balance', `You have ${balance.toFixed(4)} SOL but need at least 0.001 SOL for transaction fees. Please add SOL to your wallet or use the airdrop button.`)
         return
       }
 
@@ -108,9 +110,12 @@ export const SimplePaymentLink = () => {
       setAmount('')
       setDescription('')
       
+      // Show success toast
+      showToast('success', 'Payment Link Created!', 'Your payment link is ready to share.')
+      
     } catch (error) {
       console.error('Error creating payment link:', error)
-      alert(`Failed to create payment link: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      showToast('error', 'Failed to Create Payment Link', error instanceof Error ? error.message : 'Unknown error')
     } finally {
       setIsLoading(false)
     }
@@ -120,6 +125,7 @@ export const SimplePaymentLink = () => {
     if (createdLink) {
       await navigator.clipboard.writeText(createdLink)
       setCopied(true)
+      showToast('success', 'Link Copied!', 'Payment link copied to clipboard')
       setTimeout(() => setCopied(false), 2000)
     }
   }

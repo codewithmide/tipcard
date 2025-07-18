@@ -44,8 +44,8 @@ export class SolanaNativeContract {
     }
 
     try {
-      console.log('🔧 Using recommended SolanaNeonAccount approach...')
-      console.log('Wallet public key:', walletAdapter.publicKey.toBase58())
+      // console.log('🔧 Using recommended SolanaNeonAccount approach...')
+      // console.log('Wallet public key:', walletAdapter.publicKey.toBase58())
 
       // Use proxyApi.init with just the public key (like demo)
       const {
@@ -56,8 +56,8 @@ export class SolanaNativeContract {
         programAddress
       } = await this.proxyApi.init(walletAdapter.publicKey)
 
-      console.log('- Chain ID:', chainId)
-      console.log('- Neon EVM Program:', programAddress.toBase58())
+      // console.log('- Chain ID:', chainId)
+      // console.log('- Neon EVM Program:', programAddress.toBase58())
 
       // Store the result with wallet adapter for signing
       this.chainId = chainId
@@ -80,13 +80,13 @@ export class SolanaNativeContract {
 
       // Verify they match
       if (walletAdapter.publicKey.toBase58() === this.solanaUser.publicKey.toBase58()) {
-        console.log('✅ Wallet public keys match correctly!')
+        // console.log('✅ Wallet public keys match correctly!')
       } else {
         console.error('❌ MISMATCH: Wallet adapter and solana user have different public keys!')
         console.error('Wallet adapter:', walletAdapter.publicKey.toBase58())
         console.error('Solana user:', this.solanaUser.publicKey.toBase58())
       }
-      console.log('💰 Final balance address:', this.solanaUser.balanceAddress?.toBase58() || 'Still not available')
+      // console.log('💰 Final balance address:', this.solanaUser.balanceAddress?.toBase58() || 'Still not available')
 
       // Create contract instance
       const readOnlyProvider = new ethers.JsonRpcProvider(NEON_CORE_RPC_URL)
@@ -95,13 +95,13 @@ export class SolanaNativeContract {
       try {
         // Check if this EVM address has been used before (has transaction history)
         const txCount = await readOnlyProvider.getTransactionCount(this.solanaUser.neonWallet)
-        console.log('📊 EVM address transaction count:', txCount)
+        // console.log('📊 EVM address transaction count:', txCount)
 
         if (txCount > 0) {
-          console.log('✅ This EVM address has transaction history - it exists on-chain!')
+          // console.log('✅ This EVM address has transaction history - it exists on-chain!')
         } else {
-          console.log('ℹ️ This EVM address is new (no transaction history yet)')
-          console.log('ℹ️ The address will be registered on-chain when first transaction is made')
+          // console.log('ℹ️ This EVM address is new (no transaction history yet)')
+          // console.log('ℹ️ The address will be registered on-chain when first transaction is made')
         }
       } catch (verifyError) {
         console.log('⚠️ Could not verify EVM address:', verifyError)
@@ -114,9 +114,8 @@ export class SolanaNativeContract {
           console.warn('⚠️ No contract code found at address:', CONTRACT_ADDRESS)
           console.log('This might mean the contract is not deployed or address is incorrect')
         } else {
-          console.log('✅ Contract found at address')
-
-          console.log('✅ Contract found and ready for transactions')
+          // console.log('✅ Contract found at address')
+          // console.log('✅ Contract found and ready for transactions')
         }
       } catch (verifyError) {
         console.warn('Failed to verify contract:', verifyError)
@@ -147,7 +146,7 @@ export class SolanaNativeContract {
     try {
       // Get current nonce (exactly like working examples)
       const nonce = Number(await this.proxyApi.getTransactionCount(this.solanaUser.neonWallet))
-      console.log('Current nonce:', nonce)
+      // console.log('Current nonce:', nonce)
 
       // Prepare contract call data
       const iface = new ethers.Interface(SOLANA_TIPCARD_ABI)
@@ -197,26 +196,26 @@ export class SolanaNativeContract {
 
       const signedTransaction = await this.solanaUser.walletAdapter.signTransaction(scheduledTransaction)
 
-      console.log('Submitting transaction...')
+      // console.log('Submitting transaction...')
       signature = await this.connection.sendRawTransaction(signedTransaction.serialize())
 
-      console.log('🔗 Signature:', signature)
+      // console.log('🔗 Signature:', signature)
 
       // Wait for Solana confirmation first (like the test)
-      console.log(`Waiting for Solana confirmation...`);
+      console.log(`Processing payment link...`);
       await this.connection.confirmTransaction({
         signature: signature,
         ...(await this.connection.getLatestBlockhash())
       });
-      console.log(`✅ Solana transaction confirmed`);
+      // console.log(`✅ Solana transaction confirmed`);
 
       // Wait additional time for Neon processing (like the test)
-      console.log(`Waiting for Neon EVM processing...`);
+      // console.log(`Waiting for Neon EVM processing...`);
       await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 more seconds like test
 
       // Check transaction status
       try {
-        console.log(`Getting Neon EVM transaction details...`);
+        // console.log(`Getting Neon EVM transaction details...`);
 
         const neonTxResponse = await fetch('https://devnet.neonevm.org/sol', {
           method: 'POST',
@@ -230,17 +229,17 @@ export class SolanaNativeContract {
         });
 
         const neonTxResult = await neonTxResponse.json();
-        console.log("Neon EVM txn result: ", neonTxResult);
+        // console.log("Neon EVM txn result: ", neonTxResult);
 
         if (neonTxResult.result && neonTxResult.result.hash) {
           const neonTxHash = neonTxResult.result.hash;
-          console.log(`✅ Neon EVM payment hash: ${neonTxHash}`);
+          // console.log(`✅ Neon EVM payment hash: ${neonTxHash}`);
 
           // Retry getting the transaction receipt with proper waiting
           let actualLinkId: string | null = null;
           
           for (let attempt = 1; attempt <= 5; attempt++) {
-            console.log(`Getting transaction receipt (attempt ${attempt}/5)...`);
+            // console.log(`Getting transaction receipt (attempt ${attempt}/5)...`);
             
             try {
               const receiptResponse = await fetch('https://devnet.neonevm.org/sol', {
@@ -257,7 +256,7 @@ export class SolanaNativeContract {
               const receiptResult = await receiptResponse.json();
               
               if (receiptResult.result && receiptResult.result.logs) {
-                console.log(`📋 Transaction receipt found with ${receiptResult.result.logs.length} logs`);
+                // console.log(`📋 Transaction receipt found with ${receiptResult.result.logs.length} logs`);
                 
                 // Look for SolanaLinkCreated event to extract the actual link ID
                 for (const log of receiptResult.result.logs) {
@@ -266,11 +265,11 @@ export class SolanaNativeContract {
                     const decoded = iface.parseLog(log);
                     if (decoded && decoded.name === 'SolanaLinkCreated') {
                       actualLinkId = decoded.args.linkId;
-                      console.log(`🎉 Found SolanaLinkCreated event!`);
-                      console.log(`   Actual Link ID: ${actualLinkId}`);
-                      console.log(`   Creator: ${decoded.args.evmCreator}`);
-                      console.log(`   Amount: ${ethers.formatUnits(decoded.args.amount, 9)} SOL`);
-                      console.log(`   Description: "${decoded.args.description}"`);
+                      console.log(`Payment link created successfully!`);
+                      // console.log(`   Actual Link ID: ${actualLinkId}`);
+                      // console.log(`   Creator: ${decoded.args.evmCreator}`);
+                      // console.log(`   Amount: ${ethers.formatUnits(decoded.args.amount, 9)} SOL`);
+                      // console.log(`   Description: "${decoded.args.description}"`);
                       
                       return {
                         linkId: actualLinkId ?? neonTxHash,  // Ensure linkId is always a string
